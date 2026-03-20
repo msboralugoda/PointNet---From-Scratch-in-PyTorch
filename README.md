@@ -44,9 +44,9 @@ A **point cloud** is just a set of (x, y, z) coordinates in 3D space. Unlike ima
 | Size | Fixed H × W | Variable N points |
 | Order | Matters (row-major) | Doesn't matter |
 
-A standard MLP or CNN would produce a different output if you shuffled the input order. That's catastrophic for point clouds — the same chair looks identical whether you list its points top-to-bottom or randomly. The network must output the same result either way.
+A standard MLP or CNN would produce a different output if you shuffled the input order. That's catastrophic for point clouds - the same chair looks identical whether you list its points top-to-bottom or randomly. The network must output the same result either way.
 
-PointNet's answer: **design the architecture so order is impossible to matter.**
+PointNet's answer: **design the architecture so order does not matter.**
 
 ---
 
