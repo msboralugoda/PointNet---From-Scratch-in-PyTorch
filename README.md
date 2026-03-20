@@ -1,362 +1,215 @@
-# PointNet — From Scratch in PyTorch
+# 🔷 PointNet — Teaching a Neural Network to "Feel" 3D Shapes
 
-> My implementation of [PointNet: Deep Learning on Point Sets for 3D Classification and Segmentation](https://arxiv.org/abs/1612.00593) (Qi et al., 2017), built from scratch while learning the paper deeply.
+> *Most neural networks look at pixels. This one looks at clouds — point clouds.*
 
-This repo contains the PyTorch code alongside my own notes explaining *why* each design decision was made, not just *what* the code does.
-
----
-
-## Table of Contents
-
-- [Why PointNet?](#why-pointnet)
-- [The Core Problem](#the-core-problem)
-- [Key Ideas](#key-ideas)
-  - [1. Shared MLP](#1-shared-mlp--one-network-every-point)
-  - [2. Permutation Invariance via Max Pool](#2-permutation-invariance-via-max-pool)
-  - [3. Spatial Transformer (T-Net)](#3-spatial-transformer-t-net)
-  - [4. Orthogonality Regularisation](#4-orthogonality-regularisation)
-- [Architecture](#architecture)
-- [Tensor Shape Walkthrough](#tensor-shape-walkthrough)
-- [Code Structure](#code-structure)
-- [Setup & Training](#setup--training)
-- [Results](#results)
-- [What I Learned](#what-i-learned)
-- [References](#references)
+This is a from-scratch PyTorch implementation of **PointNet** (Qi et al., 2017), trained on the **ModelNet40** dataset for 3D object classification. No voxels, no projections — just raw points in space.
 
 ---
 
-## Why PointNet?
+## 🤔 Wait, What Even Is a Point Cloud?
 
-PointNet (2017) is one of the most influential papers in 3D deep learning. Before it, applying deep learning to 3D shapes meant converting them into voxel grids (memory-hungry, imprecise) or projecting them into 2D images (lossy). PointNet showed you could work directly on raw point clouds and do it elegantly.
+A 3D object can be represented in many ways. PointNet uses the simplest one imaginable: just a bunch of (x, y, z) coordinates floating in space.
 
-It introduced ideas that are still foundational: symmetric functions for unordered sets, spatial transformers for geometric invariance, and shared-weight per-point processing. Understanding PointNet is a prerequisite for understanding almost everything that came after it (PointNet++, DGCNN, PointTransformer, etc.).
+```
+A chair, to PointNet:
+
+[0.12, 0.44, 0.91]
+[0.13, 0.44, 0.90]
+[0.45, 0.02, 0.55]
+... (1024 points total)
+```
+
+No faces. No edges. No textures. Just dots. And somehow, a neural network learns to tell a chair from an airplane from a toilet. Science is wild.
 
 ---
 
-## The Core Problem
+## 🧠 The Core Idea
 
-A **point cloud** is just a set of (x, y, z) coordinates in 3D space. Unlike images, point clouds have three properties that make them hard to feed into standard neural networks:
+The big problem with point clouds is that they're **orderless**. If you shuffle the rows of the point matrix, it's still the same object — but a naive neural network would freak out.
 
-| Property | Images | Point Clouds |
-|---|---|---|
-| Structure | Regular grid | Unordered set |
-| Neighbours | Fixed (pixels touch) | No fixed topology |
-| Size | Fixed H × W | Variable N points |
-| Order | Matters (row-major) | Doesn't matter |
+PointNet's elegant fix: **use an operation that doesn't care about order.**
 
-A standard MLP or CNN would produce a different output if you shuffled the input order. That's catastrophic for point clouds - the same chair looks identical whether you list its points top-to-bottom or randomly. The network must output the same result either way.
+```
+Point 1 ─┐
+Point 2 ─┤─── per-point features ───► MAX POOL ───► global feature ───► label
+Point 3 ─┤
+  ...    ─┘
+```
 
-PointNet's answer: **design the architecture so order does not matter.**
+Max pooling across all points extracts the "loudest signal" regardless of order. That one idea is basically the whole paper.
 
 ---
 
-## Key Ideas
-
-### 1. Shared MLP — One Network, Every Point
-
-The first insight is to process each point *independently* with the same network weights, then aggregate. No point ever talks to another point during the MLP stages.
-
-In PyTorch this is implemented as:
-
-```python
-nn.Conv1d(in_channels, out_channels, kernel_size=1)
-```
-
-A `Conv1d` with `kernel_size=1` applies a linear transformation to each position in the sequence independently — it never looks left or right. With input shape `(B, 3, N)`, this is mathematically identical to applying an `nn.Linear(3, out)` to each of the N points separately, but runs as one fast vectorised operation.
+## 🏗️ Architecture
 
 ```
-Input:  (B, 3,  N)   — batch of N points, each with 3 coordinates
-           ↓
-Conv1d(3, 64, 1)      — same weights applied to each point
-           ↓
-Output: (B, 64, N)   — batch of N feature vectors, each 64-dimensional
+Input (3 × 1024)
+      │
+      ▼
+┌─────────────┐
+│   T-Net 3   │  ← learns to align the input (like auto-rotating the object)
+└─────────────┘
+      │
+      ▼
+ Conv1D layers    (3 → 64 → 64)
+      │
+      ▼
+┌──────────────┐
+│   T-Net 64   │  ← learns to align features (in 64D space this time)
+└──────────────┘
+      │
+      ▼
+ Conv1D layers    (64 → 128 → 1024)
+      │
+      ▼
+  MAX POOL         ← the magic: (B, 1024, N) → (B, 1024)
+      │
+      ▼
+ FC layers        (1024 → 512 → 256 → 40)
+      │
+      ▼
+  Predictions     (40 class scores)
 ```
 
-**Why not just use `nn.Linear`?** You could loop `for point in points: out = linear(point)` but that's slow and inelegant. `Conv1d(..., 1)` does it in one GPU-parallelised call with identical semantics.
+### What's a T-Net?
 
-**Key property preserved:** Since each point is processed identically and independently, shuffling the N points just shuffles the output columns — the *set* of outputs is the same. Order still can't matter here.
+The T-Net (Transform Network) is a mini neural network *inside* the main network. Its only job is to predict a transformation matrix that aligns the point cloud before processing.
+
+Think of it like this: if someone hands you a chair upside down, you mentally rotate it before recognizing it. T-Net does that — automatically, differentiably.
 
 ---
 
-### 2. Permutation Invariance via Max Pool
+## 📦 Dataset
 
-After the shared MLP, we have `(B, 1024, N)` — 1024-dimensional features for each of the N points. We need to collapse this to a single global descriptor.
+**ModelNet40** — 40 categories of 3D CAD models
 
-The operation must be **symmetric** — it must give the same result regardless of point order. The paper calls this a "symmetric function." Several options exist:
+| Split | Samples | Classes |
+|-------|---------|---------|
+| Train | 9,843 | 40 |
+| Test | 2,468 | 40 |
 
-| Aggregation | Symmetric? | Notes |
-|---|---|---|
-| Sum | ✓ | Sensitive to number of points |
-| Mean | ✓ | Loses peak signal |
-| **Max** | ✓ | Keeps the strongest signal per feature |
-| Concat | ✗ | Order-dependent |
-| Sort then MLP | ✗ | Sorting is not differentiable cleanly |
+Some of the 40 classes: `airplane`, `bathtub`, `bed`, `bench`, `chair`, `cup`, `guitar`, `lamp`, `laptop`, `person`, `piano`, `toilet`, `vase` ...
 
-**Max pooling wins** because it's differentiable, fast, and captures "is this feature present anywhere in the cloud?" rather than averaging it away.
-
-```python
-global_feat = torch.max(x, dim=2).values   # (B, 1024, N) → (B, 1024)
-```
-
-`dim=2` is the N (points) dimension. For each of the 1024 features, we ask: *what is the maximum value this feature takes across all N points?* The result is a 1024-d vector that summarises the entire point cloud — regardless of how many points there are or what order they came in.
-
-```
-Points in any order:       After per-point MLP:      After max pool:
-  point 1: [9, 2, 1]   →   feat 1: [9, 2, 1]   →
-  point 2: [3, 7, 4]   →   feat 2: [3, 7, 4]   →   [9, 7, 8]
-  point 3: [1, 5, 8]   →   feat 3: [1, 5, 8]   →
-
-Shuffle to [3,1,2]:
-  point 1: [1, 5, 8]   →   feat 1: [1, 5, 8]   →
-  point 2: [9, 2, 1]   →   feat 2: [9, 2, 1]   →   [9, 7, 8]  ← identical
-  point 3: [3, 7, 4]   →   feat 3: [3, 7, 4]   →
-```
-
-This single line — `torch.max(x, dim=2).values` — is arguably the most important line in the whole paper.
+Each model is stored as an `.off` mesh file. We sample **1024 points** from the surface using `trimesh`, then normalize to a unit sphere.
 
 ---
 
-### 3. Spatial Transformer (T-Net)
+## ⚙️ Implementation Details
 
-Even with permutation invariance solved, there's another problem: the same chair scanned from different angles produces geometrically different point clouds. Ideally the network should be robust to rotations and translations.
+| Hyperparameter | Value |
+|----------------|-------|
+| Points per object | 1024 |
+| Batch size | 32 |
+| Optimizer | Adam |
+| Learning rate | 0.001 |
+| LR schedule | Step decay (×0.5 every 20 epochs) |
+| Regularization | Feature transform orthogonality loss (λ=0.001) |
+| Dropout | 0.3 (before final FC) |
 
-The T-Net is a **mini network inside the main network** that learns to predict an alignment matrix:
+### The Orthogonality Loss — Why?
 
-```
-point cloud (B, 3, N)
-       ↓
-  [shared MLP + max pool + FC layers]   ← same structure as the main network
-       ↓
-  3×3 matrix M   (B, 3, 3)
-       ↓
-  aligned cloud = M · input             ← torch.bmm(M, x)
-```
-
-The crucial thing: **nobody tells the T-Net what the correct alignment is.** It learns what transformation makes classification easiest, purely from the classification loss backpropagating through it. The canonical pose emerges from training.
-
-```python
-input_trans = self.input_tnet(x)         # predict (B, 3, 3) matrix
-x = torch.bmm(input_trans, x)           # apply it: (B,3,3) × (B,3,N) → (B,3,N)
-```
-
-`torch.bmm` is batch matrix multiply — it applies a different matrix to each item in the batch simultaneously.
-
-The paper uses **two** T-Nets:
-- A **3×3 T-Net** on raw xyz coordinates (input space alignment)
-- A **64×64 T-Net** on the intermediate feature vectors (feature space alignment)
-
-The 64×64 one is more powerful but also harder to constrain — see the next section.
-
-**Identity initialisation matters.** In the code, the T-Net's final layer is initialised so the network starts by predicting the identity matrix. Without this, early training is chaotic because the transform starts random:
-
-```python
-nn.init.zeros_(self.fc3.weight)
-nn.init.zeros_(self.fc3.bias)
-self.fc3.bias.data.copy_(torch.eye(k).flatten())  # start as identity
-```
-
----
-
-### 4. Orthogonality Regularisation
-
-The 64×64 feature transform has 4096 parameters just to describe the matrix. Without any constraint, it can learn degenerate transforms that collapse or scramble the feature space — technically minimising loss short-term but hurting generalisation.
-
-The paper adds a regularisation term that encourages the matrix to stay **orthogonal** (rotation-like — preserves distances and angles):
+The 64D feature transform matrix should ideally be orthogonal (like a rotation matrix — it transforms without destroying information). We nudge it in that direction with a regularization term:
 
 ```
 L_reg = || I - A·Aᵀ ||²_F
 ```
 
-Where `||·||_F` is the Frobenius norm (sum of squared elements). If A is orthogonal, then `A·Aᵀ = I`, so the loss is zero. Any deviation from orthogonality is penalised.
+If `A·Aᵀ = I`, the matrix is perfectly orthogonal. This loss penalizes deviation from that.
 
+---
+
+## 📈 Training Progress
+
+| Epoch | Loss | Train Acc | Test Acc |
+|-------|------|-----------|----------|
+| 1 | 2.17 | 44% | 50% |
+| 2 | 1.51 | 58% | 49% |
+| ... | ... | ... | ... |
+| 10 | ~0.8 | ~82% | ~84% |
+
+> Loss going down + accuracy going up = the network is actually learning something. Always a relief.
+
+---
+
+## 🗂️ Project Structure
+
+```
+pointnet-modelnet40/
+├── README.md
+├── dataset.py          # ModelNet40 Dataset class (.off parsing + point sampling)
+├── model.py            # TNet + PointNetClassifier
+├── train.py            # Training loop + evaluation
+└── checkpoints/        # Saved model weights per epoch
+```
+
+---
+
+## 🚀 How to Run (Google Colab)
+
+### 1. Install dependencies
 ```python
-def tnet_regularisation_loss(transform):
-    k = transform.size(1)
-    I    = torch.eye(k, device=transform.device).unsqueeze(0)   # (1, k, k)
-    diff = I - torch.bmm(transform, transform.transpose(1, 2))  # I - A·Aᵀ
-    return torch.mean(torch.norm(diff, dim=(1, 2)))             # Frobenius norm
+!pip install trimesh kaggle -q
 ```
 
-The total loss is:
-
-```
-L_total = L_cross_entropy + 0.001 × L_reg
-```
-
-The weight `0.001` is taken directly from the paper — small enough that classification dominates, large enough that the transform stays well-behaved.
-
----
-
-## Architecture
-
-```
-Input (B, 3, N)
-    │
-    ▼
-┌─────────────┐
-│  T-Net 3×3  │  ← predicts input alignment matrix
-└─────────────┘
-    │  bmm
-    ▼
-┌──────────────────┐
-│  Shared MLP      │  Conv1d: 3→64→64   (per-point, BatchNorm + ReLU)
-└──────────────────┘
-    │
-    ├──────────────────────────── save local features (B, 64, N)
-    │                             used later for segmentation
-    ▼
-┌──────────────┐
-│  T-Net 64×64 │  ← predicts feature alignment matrix
-└──────────────┘
-    │  bmm
-    ▼
-┌──────────────────────────────────┐
-│  Shared MLP                      │  Conv1d: 64→64→128→1024  (per-point)
-└──────────────────────────────────┘
-    │
-    ▼
-┌─────────────────────────┐
-│  Global Max Pool        │  (B, 1024, N) → (B, 1024)
-└─────────────────────────┘
-    │
-    ▼
-┌─────────────────────────────────────┐
-│  Classification head                │  FC: 1024→512→256→k
-│  (Dropout 0.3, BatchNorm, ReLU)     │
-└─────────────────────────────────────┘
-    │
-    ▼
-Logits (B, k)       k=40 for ModelNet40
-```
-
----
-
-## Tensor Shape Walkthrough
-
-Tracing the shape of the data at each step is the clearest way to understand what each layer does. Here with `B=32` (batch size) and `N=1024` (points per cloud):
-
-| Stage | Operation | Shape |
-|---|---|---|
-| Raw input | — | `(32, 3, 1024)` |
-| Input T-Net output | mini-network | `(32, 3, 3)` |
-| After input transform | `bmm(T, x)` | `(32, 3, 1024)` |
-| After MLP (64, 64) | `Conv1d` × 2 | `(32, 64, 1024)` |
-| Feature T-Net output | mini-network | `(32, 64, 64)` |
-| After feature transform | `bmm(T, x)` | `(32, 64, 1024)` |
-| After MLP (64, 128, 1024) | `Conv1d` × 3 | `(32, 1024, 1024)` |
-| After global max pool | `torch.max(dim=2)` | `(32, 1024)` |
-| After FC (512) | `Linear` + dropout | `(32, 512)` |
-| After FC (256) | `Linear` + dropout | `(32, 256)` |
-| Output logits | `Linear` | `(32, 40)` |
-
-Notice the N=1024 dimension stays alive through every layer — all points are processed in parallel. Only at max pool does it disappear, collapsing N points into one global descriptor per sample.
-
----
-
-## Code Structure
-
-```
-pointnet-from-scratch/
-├── tnet.py        # Spatial transformer network (T-Net) + regularisation loss
-├── pointnet.py    # Encoder backbone + classification head + total loss function
-├── dataset.py     # ModelNet40 data loader with augmentation
-└── train.py       # Training loop, evaluation, checkpointing
-```
-
-### `tnet.py`
-Contains `TNet(k)` — the spatial transformer that predicts a k×k alignment matrix. Works for both k=3 (input transform) and k=64 (feature transform). Also contains `tnet_regularisation_loss()` which computes the orthogonality penalty.
-
-### `pointnet.py`
-Contains:
-- `PointNetEncoder` — the shared backbone (two T-Nets + two MLP blocks + max pool). Can optionally return local features for segmentation.
-- `PointNetClassifier` — adds the classification FC head on top of the encoder.
-- `pointnet_loss()` — combines cross-entropy with the T-Net regularisation term.
-
-### `dataset.py`
-Contains `ModelNet40` dataset class and `get_dataloaders()` convenience function. Handles HDF5 loading, random subsampling to `num_points`, and training augmentation (random jitter + shuffle).
-
-### `train.py`
-Full training loop with Adam optimiser, StepLR scheduler (halves LR every 20 epochs), per-epoch train/test accuracy logging, and best-model checkpointing.
-
----
-
-## Setup & Training
-
-**1. Install dependencies**
-```bash
-pip install torch torchvision h5py numpy
-```
-
-**2. Download ModelNet40**
-
-The dataset is available from [Kaggle](https://www.kaggle.com/datasets/balraj98/modelnet40-princeton-3d-object-dataset) (~400 MB). Download and unzip it.
-
-**3. Train**
-```bash
-python train.py --data_root ./modelnet40_ply_hdf5_2048
-```
-
-**Key arguments**
-
-| Argument | Default | Description |
-|---|---|---|
-| `--data_root` | required | Path to `modelnet40_ply_hdf5_2048/` |
-| `--num_points` | 1024 | Points sampled per cloud |
-| `--batch_size` | 32 | Samples per batch |
-| `--epochs` | 200 | Training epochs |
-| `--lr` | 1e-3 | Initial learning rate |
-| `--lr_step` | 20 | Halve LR every N epochs |
-| `--dropout` | 0.3 | Dropout on FC layers |
-| `--reg_weight` | 0.001 | T-Net regularisation weight |
-| `--save_dir` | checkpoints/ | Where to save best model |
-
-**Training on Google Colab (recommended if your machine is slow)**
+### 2. Download dataset from Kaggle
 ```python
-# Mount Drive so checkpoints survive session disconnects
-from google.colab import drive
-drive.mount('/content/drive')
+import os
+os.environ['KAGGLE_USERNAME'] = 'your_username'
+os.environ['KAGGLE_KEY'] = 'your_api_key'
+!kaggle datasets download -d balraj98/modelnet40-princeton-3d-object-dataset -p /content/modelnet40
+```
 
-!python train.py \
-    --data_root ./modelnet40_ply_hdf5_2048 \
-    --save_dir /content/drive/MyDrive/pointnet_checkpoints
+### 3. Unzip
+```python
+import zipfile
+with zipfile.ZipFile('/content/modelnet40/modelnet40-princeton-3d-object-dataset.zip', 'r') as z:
+    z.extractall('/content/modelnet40/')
+```
+
+### 4. Train
+```python
+# Set config
+NUM_POINTS = 1024
+NUM_CLASSES = 40
+BATCH_SIZE = 32
+EPOCHS = 10
+LR = 0.001
+
+# Then run training loop
 ```
 
 ---
 
-## Results
+## 🔍 Key Concepts Explained Simply
 
-Training on ModelNet40 with default settings (1024 points, 200 epochs, batch size 32, Adam lr=1e-3):
+**Why not use CNNs on 3D data?**
+CNNs need a grid (pixels, voxels). Point clouds don't have a grid — they're irregular and unordered. You'd have to either voxelize (wastes memory, loses detail) or project to 2D (loses depth info). PointNet skips all that.
 
-| Metric | This implementation | Paper (PointNet) |
-|---|---|---|
-| Test accuracy | ~89% | 89.2% |
-| Parameters | ~3.5M | ~3.5M |
-| Points per cloud | 1024 | 1024 |
-| Training epochs | 200 | 200 |
+**Why max pooling and not average pooling?**
+Max pooling picks the "most activated" feature across all points. It's like asking "did *any* point vote strongly for this feature?" Average pooling would dilute strong signals with noise from irrelevant points.
 
-*Results will be updated once training completes.*
+**Why does order not matter after max pooling?**
+Because `max(a, b, c) == max(c, a, b) == max(b, c, a)`. The max operation is symmetric — shuffle the inputs all you want, the output is the same.
 
 ---
 
-## What I Learned
+## 📚 Reference
 
-**`Conv1d(in, out, 1)` is a shared MLP.** A convolution with kernel size 1 never looks at neighbours — it applies the same linear transform to each position independently. This is the idiom for "process each point with the same weights" in PyTorch.
-
-**`torch.max(x, dim=2).values` is the whole trick.** This one line is what makes the network permutation-invariant. Max pooling is a symmetric function — it doesn't care what order the points came in. Everything before it processes points independently; this line merges them.
-
-**`torch.bmm` for the spatial transform.** Batch matrix multiply applies the predicted alignment matrix to every point cloud in the batch simultaneously. Shape: `(B, 3, 3) × (B, 3, N) → (B, 3, N)`.
-
-**Identity initialisation for T-Net.** The T-Net's last layer is initialised to output the identity matrix. Without this, early training is unstable because the initial random transform garbles the input before the network has learned anything useful.
-
-**`drop_last=True` in the DataLoader.** BatchNorm computes statistics over the batch. If the last batch has only 1 sample, BatchNorm crashes (can't compute variance over 1 item). `drop_last=True` discards the last incomplete batch.
-
-**The regularisation weight of 0.001 is deliberate.** Too high and it dominates the loss, forcing orthogonality at the expense of classification accuracy. Too low and the 64×64 feature transform degenerates. The paper's value of 0.001 is the sweet spot.
+```bibtex
+@inproceedings{qi2017pointnet,
+  title={PointNet: Deep Learning on Point Sets for 3D Classification and Segmentation},
+  author={Qi, Charles R and Su, Hao and Mo, Kaichun and Guibas, Leonidas J},
+  booktitle={CVPR},
+  year={2017}
+}
+```
 
 ---
 
-## References
+## 🗺️ What's Next
 
-- **Paper:** Qi, C. R., Su, H., Mo, K., & Guibas, L. J. (2017). [PointNet: Deep Learning on Point Sets for 3D Classification and Segmentation](https://arxiv.org/abs/1612.00593). CVPR 2017.
-- **Official implementation:** [charlesq34/pointnet](https://github.com/charlesq34/pointnet) (TensorFlow)
-- **Dataset:** [ModelNet40](https://modelnet.cs.princeton.edu/) — Princeton ModelNet
-- **Spatial Transformer Networks:** Jaderberg et al. (2015). [Spatial Transformer Networks](https://arxiv.org/abs/1506.02025). NeurIPS 2015.
+- [ ] Train for full 50 epochs
+- [ ] Add data augmentation (random rotation, jitter)
+- [ ] Implement PointNet segmentation head (ShapeNet dataset)
+- [ ] Try PointNet++ (hierarchical local features)
+
