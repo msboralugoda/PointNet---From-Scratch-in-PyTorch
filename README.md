@@ -6,7 +6,7 @@ This is a from-scratch PyTorch implementation of **PointNet** (Qi et al., 2017),
 
 ---
 
-## 🤔 Wait, What Is a Point Cloud?
+## Wait, What Is a Point Cloud?
 
 A 3D object can be represented in many ways. PointNet uses the simplest one imaginable: just a bunch of (x, y, z) coordinates floating in space.
 
