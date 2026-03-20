@@ -2,11 +2,11 @@
 
 > *Most neural networks look at pixels. This one looks at point clouds.*
 
-This is a from-scratch PyTorch implementation of **PointNet** (Qi et al., 2017), trained on the **ModelNet40** dataset for 3D object classification. No voxels, no projections — just raw points in space.
+This is a from-scratch PyTorch implementation of **PointNet** (Qi et al., 2017), trained on the **ModelNet40** dataset for 3D object classification. No voxels, no projections, just raw points in space.
 
 ---
 
-## 🤔 Wait, What Even Is a Point Cloud?
+## 🤔 Wait, What Is a Point Cloud?
 
 A 3D object can be represented in many ways. PointNet uses the simplest one imaginable: just a bunch of (x, y, z) coordinates floating in space.
 
