@@ -1,6 +1,6 @@
 # 🔷 PointNet — Teaching a Neural Network to "Feel" 3D Shapes
 
-> *Most neural networks look at pixels. This one looks at clouds — point clouds.*
+> *Most neural networks look at pixels. This one looks at point clouds.*
 
 This is a from-scratch PyTorch implementation of **PointNet** (Qi et al., 2017), trained on the **ModelNet40** dataset for 3D object classification. No voxels, no projections — just raw points in space.
 
