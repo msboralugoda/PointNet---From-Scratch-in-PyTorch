@@ -2,7 +2,7 @@
 
 > My implementation of [PointNet: Deep Learning on Point Sets for 3D Classification and Segmentation](https://arxiv.org/abs/1612.00593) (Qi et al., 2017), built from scratch while learning the paper deeply.
 
-This repo contains clean, well-commented PyTorch code alongside my own notes explaining *why* each design decision was made — not just *what* the code does.
+This repo contains the PyTorch code alongside my own notes explaining *why* each design decision was made, not just *what* the code does.
 
 ---
 
