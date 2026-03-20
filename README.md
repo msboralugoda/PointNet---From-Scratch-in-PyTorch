@@ -27,7 +27,7 @@ This repo contains the PyTorch code alongside my own notes explaining *why* each
 
 ## Why PointNet?
 
-PointNet (2017) is one of the most influential papers in 3D deep learning. Before it, applying deep learning to 3D shapes meant converting them into voxel grids (memory-hungry, imprecise) or projecting them into 2D images (lossy). PointNet showed you could work directly on raw point clouds — and do it elegantly.
+PointNet (2017) is one of the most influential papers in 3D deep learning. Before it, applying deep learning to 3D shapes meant converting them into voxel grids (memory-hungry, imprecise) or projecting them into 2D images (lossy). PointNet showed you could work directly on raw point clouds and do it elegantly.
 
 It introduced ideas that are still foundational: symmetric functions for unordered sets, spatial transformers for geometric invariance, and shared-weight per-point processing. Understanding PointNet is a prerequisite for understanding almost everything that came after it (PointNet++, DGCNN, PointTransformer, etc.).
 
