@@ -1,4 +1,4 @@
-# 🔷 PointNet — Teaching a Neural Network to "Feel" 3D Shapes
+# PointNet — Teaching a Neural Network to "Feel" 3D Shapes
 
 > *Most neural networks look at pixels. This one looks at point clouds.*
 
@@ -23,9 +23,9 @@ No faces. No edges. No textures. Just dots. And somehow, a neural network learns
 
 ---
 
-## 🧠 The Core Idea
+## The Core Idea
 
-The big problem with point clouds is that they're **orderless**. If you shuffle the rows of the point matrix, it's still the same object — but a naive neural network would freak out.
+The big problem with point clouds is that they're **orderless**. If you shuffle the rows of the point matrix, it's still the same object, but a naive neural network would freak out.
 
 PointNet's elegant fix: **use an operation that doesn't care about order.**
 
@@ -36,11 +36,11 @@ Point 3 ─┤
   ...    ─┘
 ```
 
-Max pooling across all points extracts the "loudest signal" regardless of order. That one idea is basically the whole paper.
+Max pooling across all points extracts the "loudest signal" regardless of order. That one idea is one of the most important of the whole paper.
 
 ---
 
-## 🏗️ Architecture
+## Architecture
 
 ```
 Input (3 × 1024)
@@ -75,11 +75,11 @@ Input (3 × 1024)
 
 The T-Net (Transform Network) is a mini neural network *inside* the main network. Its only job is to predict a transformation matrix that aligns the point cloud before processing.
 
-Think of it like this: if someone hands you a chair upside down, you mentally rotate it before recognizing it. T-Net does that — automatically, differentiably.
+Think of it like this: if someone hands you a chair upside down, you mentally rotate it before recognizing it. T-Net does that automatically, differentiably.
 
 ---
 
-## 📦 Dataset
+## Dataset
 
 **ModelNet40** — 40 categories of 3D CAD models
 
@@ -94,7 +94,7 @@ Each model is stored as an `.off` mesh file. We sample **1024 points** from the 
 
 ---
 
-## ⚙️ Implementation Details
+## Implementation Details
 
 | Hyperparameter | Value |
 |----------------|-------|
@@ -118,7 +118,7 @@ If `A·Aᵀ = I`, the matrix is perfectly orthogonal. This loss penalizes deviat
 
 ---
 
-## 📈 Training Progress
+## Training Progress
 
 | Epoch | Loss | Train Acc | Test Acc |
 |-------|------|-----------|----------|
@@ -131,7 +131,7 @@ If `A·Aᵀ = I`, the matrix is perfectly orthogonal. This loss penalizes deviat
 
 ---
 
-## 🗂️ Project Structure
+## Project Structure
 
 ```
 pointnet-modelnet40/
@@ -180,7 +180,7 @@ LR = 0.001
 
 ---
 
-## 🔍 Key Concepts Explained Simply
+## Key Concepts Explained Simply
 
 **Why not use CNNs on 3D data?**
 CNNs need a grid (pixels, voxels). Point clouds don't have a grid — they're irregular and unordered. You'd have to either voxelize (wastes memory, loses detail) or project to 2D (loses depth info). PointNet skips all that.
@@ -206,7 +206,7 @@ Because `max(a, b, c) == max(c, a, b) == max(b, c, a)`. The max operation is sym
 
 ---
 
-## 🗺️ What's Next
+## What's Next
 
 - [ ] Train for full 50 epochs
 - [ ] Add data augmentation (random rotation, jitter)
